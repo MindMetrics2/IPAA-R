@@ -1,0 +1,475 @@
+# Librer?as
+library(GPArotation)
+library(readxl)#Leer excel
+library(psych) #Datos descriptivos y m?s
+library(dplyr) #Funci?n %>%
+library(lavaan)#AFC y SEM
+library(semTools)#Invarianza
+library(parameters)#n_factors
+library(semPlot)#graficos de aFC
+library(EFAtools)#omega Y AFE
+library(readxl)#leer
+library(MBESS)#intervalos de confianza del omega
+library(openxlsx)#Guardar
+library(MVN)#normalidad
+library(PerformanceAnalytics)#Grafico de las correlaciones
+library(corrr)
+library(foreign)
+library(haven)
+library(MVN)
+library(gptstudio)
+
+
+#Referencias
+citation("psych")
+
+##----------------------------------------------------------------------------------------------------------
+#Colocar la ruta donde se exportar?n las hojas de c?lculo 
+setwd('D:/trabajos realizados/Lincol/IPPA-R')# F:/Psicologia/Analisis en R
+
+#Importar datos
+
+da <- read_sav("D:/Trabajos realizados/Lincol/IPPA-R/IPAA-R-808-Participantes[1].sav")
+
+##----------------------------------------------------------------------------------------------------------
+# Análisis de ítems por dimensión
+# Extraer parte de la base y crear objetos por dimensión
+F1 <- dplyr::select(da, A1, A2, A3, A4)   # Planificación
+F2 <- dplyr::select(da, A5, A6, A7, A8)   # Ejecución
+F3 <- dplyr::select(da, A9, A10, A11, A12)   # Evaluación
+
+
+#Modifica
+#Aislar la escala principal
+# Aislar la escala principal
+de <- dplyr::select(da, 
+                    A1, A2, A3, A4,         # Planificación
+                    A5, A6, A7, A8,         # Ejecución
+                    A9, A10, A11, A12)         # Evaluación
+
+##---------------------------------------------------------------------------------------------------------
+#Porcentaje de respuesta por ítem (F, %, M,DE, g1, g2, ihc, h2, id)
+# Porcentaje de respuesta por ítem - Planificación (F1)
+Tabla1 <- rbind(table(F1$A1), table(F1$A2), table(F1$A3), table(F1$A4))
+
+# Ejecución (F2)
+Tabla1 <- rbind(table(F2$A5), table(F2$A6), table(F2$A7), table(F2$A8))
+
+# Evaluación (F3)
+Tabla1 <- rbind(table(F3$A9), table(F3$A10), table(F3$A11), table(F3$A12))
+
+#Frecuencia y porcentaje               
+Tabla2<-prop.table(Tabla1, margin = 1)
+TablaFrecuencia = Tabla2*100
+TablaFrecuencia 
+
+#Sobrescribir y crear un objeto
+TablaFrecuencia <-as.data.frame(TablaFrecuencia)
+TablaFrecuencia <- round(TablaFrecuencia,2) 
+TablaFrecuencia
+
+##----------------------------------------------------------------------------------------------------------
+#Creación de objetos para el análisis de ítem
+Descriptivos<-describe(F3)  #Para M, DE, G1, G2
+
+Descriptivos
+#Coeficiente de variación
+CV <- (Descriptivos$sd /  Descriptivos$mean *100)
+CV
+
+#Para el IHC Y alfa si se elimina (pearson = alfa, policóorica o tetreacorica= alfa ordinal)
+Matriz_G<- cor(F1)#cor(F1)= Matriz Pearson, tetrachoric(F1)
+Matriz_G
+AlfaGeneral<-psych::alpha(Matriz_G) #Para el IHC
+AlfaGeneral
+
+#AFE para comunalidad
+AFEfactor<-fa(F3,nfactors = 1, fm = "ml",rotate ="oblimin")# de querer usar una matriz tetracorica "tet"
+AFEfactor#Crear tabla con los datos que se necesitar?n en el an?lisis de ?tems
+
+# Crear tabla (Modificar segun cantidad de ítems en la dimensión list(c(1:?)
+TablaAnalisis <- list(c(1:4),Descriptivos$mean,Descriptivos$sd, Descriptivos$skew,Descriptivos$kurtosis,
+                      AlfaGeneral$item.stats$r.drop, AlfaGeneral$alpha.drop$std.alpha,AFEfactor$communality, CV)
+
+TablaAnalisis <-as.data.frame(TablaAnalisis)
+TablaAnalisis <- TablaAnalisis[,-1]
+
+#Dar formato a los resultados
+TablaAnalisis <- TablaAnalisis %>% 
+  mutate_if(is.numeric, round, digits = 2)
+
+#Nombrar y exportar en Excel
+names(TablaAnalisis)<- c("M","DE","g1","g2","IHC","α drop","h2","CV")
+TablaAnalisis
+
+#AlfaGeneral$item.stats$r.cor#para alf si se elimina de la escalo o factor
+##----------------------------------------------------------------------------------------------------------
+#Concatenar ambos resultados para la tabla final de an?lisis de ?tems
+TablaFinal <- list(cbind(TablaFrecuencia,TablaAnalisis))
+TablaFinal
+write.xlsx(TablaFinal, "F3.xlsx", colNames=TRUE, rowNames=TRUE)
+##----------------------------------------------------------------------------------------------------------
+#EMPEZAR LUEGO DE HABER EJECUTADO TODAS LAS DIMENSIONES
+#Matriz de correlación policóricas
+Matriz_G<-cor(de)
+ImprimirMatriz <- as.data.frame(Matriz_G)
+ImprimirMatriz <- ImprimirMatriz %>% 
+  mutate_if(is.numeric, round, digits = 2)
+write.xlsx(ImprimirMatriz, "matriz.xlsx")
+
+##----------------------------------------------------------------------------------------------------------
+#Analisis factorial confirmatorio
+
+# Creando un subconjunto de índices de ajuste que examinaremos en todos los modelos
+fit.subset<-c("chisq.scaled", "pvalue.scaled",
+              "df.scaled","cfi.scaled", 
+              "tli.scaled", "rmsea.scaled",
+              "rmsea.ci.lower.scaled","rmsea.ci.upper.scaled",
+              "srmr","wrmr")
+
+
+#3) Modelo multidimensional de 3 factores correlacionados
+FC3.CFA <-'
+D1 =~ A1 + A2 + A3 + A4   # Planificación
+D2 =~ A5 + A6 + A7 + A8   # Ejecución
+D3 =~ A9 + A10 + A11 + A12   # Evaluación
+'
+
+#Estimación
+fit.FC3.CFA<-cfa(model = FC3.CFA, data =da, estimator="MLR",
+                 mimic="Mplus") #std.lv=TRUE Colocar si es necesario igualar a 1 la regresi?n
+
+# Evaluación del modelo
+fitmeasures(fit.FC3.CFA, fit.subset)
+
+#Path analisis
+# Etiquetas personalizadas: 3 latentes + 12 ítems
+etiquetas_personalizadas <- c(paste0("Ítem ", 1:12), 
+                              "Planificación", "Ejecución", "Evaluación")
+
+
+semPaths(fit.FC3.CFA, 
+         whatLabels = "std",
+         style = "lisrel", layout = "tree3", 
+         intercepts = FALSE, residuals = FALSE, thresholds = FALSE,
+         rotation = 1, 
+         sizeMan = 5, sizeLat = 10, 
+         shapeMan = "rectangle", shapeLat = "ellipse",
+         edge.color = "black", edge.width = 2,
+         nDigits = 2, edge.label.cex = 1, 
+         label.prop = 1.5,
+         nodeLabels = etiquetas_personalizadas)  # <- aquí va
+
+
+# Echemos un vistazo a las cargas estandarizadas
+select(arrange(arrange(parameterestimates(fit.FC3.CFA, standardized = T)[1:24,], rhs),lhs),
+       # solo ver un subconjunto de resultados de interés
+       lhs:est,pvalue,std.all)   
+
+#Resumen
+summary(fit.FC3.CFA, fit.measures = TRUE, standardized=T, rsquare=TRUE)  
+
+#Confiabilidad
+Real1<-reliability(fit.FC3.CFA, return.total = TRUE)
+Real1<-round(Real1,3)
+Real1
+
+#Modelo de 3 factores y uno de segundo orden
+L2.FC3.CFA <-'
+D1 =~ A1 + A2 + A3 + A4   # Planificación
+D2 =~ A5 + A6 + A7 + A8   # Ejecución
+D3 =~ A9 + A10 + A11 + A12   # Evaluación
+G1 =~ 1*D1 + 1*D2 + 1*D3   # Autoregulación total
+'
+
+#Estimación
+fit.L2.FC3.CFA<-cfa(model = L2.FC3.CFA, data =da, estimator="MLR",
+                    mimic="Mplus") #std.lv=TRUE Colocar si es necesario igualar a 1 la regresi?n
+
+# Evaluación del modelo
+fitmeasures(fit.L2.FC3.CFA, fit.subset)
+
+#Path analisis
+# Etiquetas personalizadas: 3 latentes + 12 ítems
+etiquetas_personalizadas <- c(paste0("Ítem ", 1:12), 
+                              "Planificación", "Ejecución", "Evaluación", "Autorregulación")
+
+#Diagrama
+semPaths(fit.L2.FC3.CFA, 
+         whatLabels = "std",
+         style = "lisrel", layout = "tree3", 
+         intercepts = FALSE, residuals = FALSE, thresholds = FALSE,
+         rotation = 1, 
+         sizeMan = 5, sizeLat = 7, 
+         shapeMan = "rectangle", shapeLat = "ellipse",
+         edge.color = "black", edge.width = 2,
+         nDigits = 2, edge.label.cex = 1, 
+         label.prop = 1.5,
+         nodeLabels = etiquetas_personalizadas)  # <- aquí va
+
+# Echemos un vistazo a las cargas estandarizadas
+select(arrange(arrange(parameterestimates(fit.L2.FC3.CFA, standardized = T)[1:24,], rhs),lhs),
+       # solo ver un subconjunto de resultados de interés
+       lhs:est,pvalue,std.all)
+
+#Resumen
+summary(fit.L2.FC3.CFA, fit.measures = TRUE, standardized=T, rsquare=TRUE)
+
+#Indice de modificaciÓn
+modindices(fit.L2.FC3.CFA, sort=TRUE, maximum.number = 15)
+
+###### Transformación Shidmt-Leiman
+#Para modelos de segundo orden
+#Transformaci?n de Shmit-
+SL_lav <- SL(fit.L2.FC3.CFA, g_name = "G1")
+SL_lav$sl
+
+#Confiabilidad
+OMEGA(fit.L2.FC3.CFA, g_name = "G1")
+
+
+
+#6) Modelo Multidimensional Bifactor
+BIFAC.CFA<-'D1 =~ A1 + A2 + A3 + A4   # Planificación
+D2 =~ A5 + A6 + A7 + A8   # Ejecución
+D3 =~ A9 + A10 + A11 + A12   # Evaluación
+G1=~A1 + A2 + A3 + A4 + A5 + A6 + A7 + A8 + A9 + A10 + A11 + A12'
+
+#Estimación
+fit.BIFAC.CFA<-cfa(model = BIFAC.CFA, data = da, orthogonal= TRUE, 
+                   estimator="MLR", mimic="Mplus", std.lv=TRUE)
+
+# Evaluación del modelo
+fitmeasures(fit.BIFAC.CFA, fit.subset)
+
+# También podemos mirar la forma gráfica del modelo
+lavaanPlot(name = "BIFAC", model = fit.BIFAC.CFA,
+           node_options = list(shape = "box", fontname = "Helvetica"),
+           edge_options = list(color = "black"), coefs = TRUE)
+
+#Path analisis
+# Etiquetas personalizadas: 3 latentes + 12 ítems
+etiquetas_personalizadas <- c(paste0("Ítem ", 1:12), 
+                              "Planificación", "Ejecución", "Evaluación", "Autoregulación")
+
+
+semPaths(fit.BIFAC.CFA, 
+         whatLabels = "std",
+         style = "lisrel", layout = "tree3", 
+         intercepts = FALSE, residuals = FALSE, thresholds = FALSE,
+         rotation = 1, 
+         sizeMan = 5, sizeLat = 7, 
+         shapeMan = "rectangle", shapeLat = "ellipse",
+         edge.color = "black", edge.width = 2,
+         nDigits = 2, edge.label.cex = 0.70, 
+         label.prop = 1.5,
+         nodeLabels = etiquetas_personalizadas)  # <- aquí va
+
+# Echemos un vistazo a las cargas estandarizadas
+select(arrange(arrange(parameterestimates(fit.BIFAC.CFA, standardized = T)[1:48,], rhs),lhs),
+       # solo ver un subconjunto de resultados de interés
+       lhs:est,pvalue,std.all)
+
+#Resumen
+summary(fit.BIFAC.CFA, fit.measures = TRUE, standardized=T, rsquare=TRUE)
+
+#Indice de modificación
+modindices(fit.BIFAC.CFA, sort=TRUE, maximum.number = 15)
+
+#Confiabilidad
+OMEGA(fit.BIFAC.CFA, g_name = "G1")
+
+#Evaluación de los modeloa
+fit.summary <- round(rbind(fitmeasures(fit.FC3.CFA, fit.subset),
+                           fitmeasures(fit.L2.FC3.CFA, fit.subset),
+                           fitmeasures(fit.BIFAC.CFA, fit.subset)),3)
+
+rownames(fit.summary) <- c("3 Factores relacionados", "2do orden", "Bifactor")
+colnames(fit.summary) <- c("χ²","p","gl","CFI","TLI","RMSEA","Lower","Upper","SRMR","WRMR")
+fit.summary
+
+#Guardar
+fit.summary <- as.data.frame(fit.summary)
+fit.summary
+write.xlsx(fit.summary,"Modelos1.xlsx",colNames=TRUE, rowNames=TRUE)
+
+#---------------------------------------------------------------------------------------------------------------------
+#Cargas factoriales estandarizadas
+Cargas <- standardizedSolution(fit.BIFAC.CFA)
+Cargas
+
+#Guardar cargas factoriales estandarizadas en excel
+Cargas <- as.data.frame(Cargas)
+Cargas
+write.xlsx(Cargas, "bifac.xlsx")
+
+
+#---------------------------------------------------------------------------------------------------------------------
+#Invarianza configural (SEXO)
+inv.sex.conf<-sem(BIFAC.CFA, data=da, group="Sexo", orthogonal= TRUE, 
+                  estimator="MLR", mimic="Mplus", std.lv=TRUE)
+
+# Evaluación del modelo
+fitmeasures(inv.sex.conf, fit.subset)
+summary(inv.sex.conf, fit.measures = TRUE, standardized=T)
+
+#Invarianza metrica
+inv.sex.metric<-cfa(BIFAC.CFA, data=da, group="Sexo", orthogonal= TRUE, 
+                    estimator="MLR", mimic="Mplus", std.lv=TRUE, 
+                    group.equal=c("loadings"))
+
+# Evaluación del modelo
+fitmeasures(inv.sex.metric, fit.subset)
+
+
+#Invarianza escalar
+inv.sex.scalar<-cfa(BIFAC.CFA, data=da, group="Sexo", orthogonal= TRUE, 
+                    estimator="MLR", mimic="Mplus", std.lv=TRUE, 
+                    group.equal=c("loadings", "intercepts"))
+
+# Evaluación del modelo
+fitmeasures(inv.sex.scalar, fit.subset)
+
+#Resumen
+summary(fit, fit.measures = TRUE, standardized=T)
+
+#Invarianza estricta
+inv.sex.stric<-cfa(BIFAC.CFA, data=da, group="Sexo", orthogonal= TRUE, 
+                   estimator="MLR", mimic="Mplus", std.lv=TRUE,
+                   group.equal=c("loadings", "intercepts","residuals"))
+
+# Evaluación del modelo
+fitmeasures(inv.sex.stric, fit.subset)
+
+
+#Invarianza estructural
+inv.sex.struc<-cfa(BIFAC.CFA, data=da, group="Sexo",orthogonal= TRUE, 
+                   estimator="MLR", mimic="Mplus", std.lv=TRUE,
+                   group.equal=c("loadings", "intercepts","residuals", "lv.variances",
+                                 "lv.covariances"))
+
+fitmeasures(inv.sex.struc, fit.subset)
+
+
+summary(inv.sex.struc, fit.measures=TRUE)
+
+# Organizar en una tabla para excel ---------------------------------------
+fit.stats <- rbind(fitmeasures(inv.sex.conf, fit.measures = c("chisq.scaled", "df.scaled","pvalue.scaled", "cfi.scaled","rmsea.scaled","srmr")),
+                   fitmeasures(inv.sex.metric, fit.measures = c("chisq.scaled", "df.scaled","pvalue.scaled", "cfi.scaled","rmsea.scaled","srmr")),
+                   fitmeasures(inv.sex.scalar, fit.measures = c("chisq.scaled", "df.scaled","pvalue.scaled", "cfi.scaled","rmsea.scaled","srmr")),
+                   fitmeasures(inv.sex.stric, fit.measures = c("chisq.scaled", "df.scaled","pvalue.scaled", "cfi.scaled","rmsea.scaled","srmr")),
+                   fitmeasures(inv.sex.struc, fit.measures = c("chisq.scaled", "df.scaled","pvalue.scaled", "cfi.scaled","rmsea.scaled","srmr")))
+
+rownames(fit.stats) <- c("Configural", "Métrica","Fuerte", "Estricta", "Estructural")
+colnames(fit.stats) <- c("χ²","gl","p","CFI","RMSEA","SRMR")
+fit.stats
+
+#Guardar resultados
+Invarianza <- as.data.frame(fit.stats)
+Invarianza <- round(Invarianza,3)
+
+write.xlsx(Invarianza,"INV.aut.sex.xlsx",colNames=TRUE, rowNames=TRUE)
+
+names(da)
+#(Grupo etario)
+#Invarianza configural
+inv.sex.conf<-sem(BIFAC.CFA, data=da, group= "Etario", orthogonal= TRUE, 
+                  estimator="MLR", mimic="Mplus", std.lv=TRUE)
+
+# Evaluación del modelo
+fitmeasures(inv.sex.conf, fit.subset)
+
+summary(inv.sex.conf, fit.measures=TRUE)
+
+#Invarianza metrica
+inv.sex.metric<-cfa(BIFAC.CFA, data=da, group="Etario", orthogonal= TRUE, 
+                    estimator="MLR", mimic="Mplus", std.lv=TRUE, 
+                    group.equal=c("loadings"))
+
+# Evaluación del modelo
+fitmeasures(inv.sex.metric, fit.subset)
+
+
+#Invarianza escalar
+inv.sex.scalar<-cfa(BIFAC.CFA, data=da, group="Etario", orthogonal= TRUE, 
+                    estimator="MLR", mimic="Mplus", std.lv=TRUE, 
+                    group.equal=c("loadings", "intercepts"))
+
+# Evaluación del modelo
+fitmeasures(inv.sex.scalar, fit.subset)
+
+
+#Invarianza estricta
+inv.sex.stric<-cfa(BIFAC.CFA, data=da, group="Etario", orthogonal= TRUE, 
+                   estimator="MLR", mimic="Mplus", std.lv=TRUE,
+                   group.equal=c("loadings", "intercepts","residuals"))
+
+# Evaluación del modelo
+fitmeasures(inv.sex.stric, fit.subset)
+
+
+#Invarianza estructural
+inv.sex.struc<-cfa(BIFAC.CFA, data=da, group="Etario",orthogonal= TRUE, 
+                   estimator="MLR", mimic="Mplus", std.lv=TRUE,
+                   group.equal=c("loadings", "intercepts","residuals", "lv.variances",
+                                 "lv.covariances"))
+
+fitmeasures(inv.sex.struc, fit.subset)
+
+
+# Organizar en una tabla para excel ---------------------------------------
+fit.stats <- rbind(fitmeasures(inv.sex.conf, fit.measures = c("chisq.scaled", "df.scaled","pvalue.scaled", "cfi.scaled","rmsea.scaled","srmr")),
+                   fitmeasures(inv.sex.metric, fit.measures = c("chisq.scaled", "df.scaled","pvalue.scaled", "cfi.scaled","rmsea.scaled","srmr")),
+                   fitmeasures(inv.sex.scalar, fit.measures = c("chisq.scaled", "df.scaled","pvalue.scaled", "cfi.scaled","rmsea.scaled","srmr")),
+                   fitmeasures(inv.sex.stric, fit.measures = c("chisq.scaled", "df.scaled","pvalue.scaled", "cfi.scaled","rmsea.scaled","srmr")),
+                   fitmeasures(inv.sex.struc, fit.measures = c("chisq.scaled", "df.scaled","pvalue.scaled", "cfi.scaled","rmsea.scaled","srmr")))
+
+rownames(fit.stats) <- c("Configural", "Métrica","Fuerte", "Estricta", "Estructural")
+colnames(fit.stats) <- c("χ²","gl","p","CFI","RMSEA","SRMR")
+fit.stats
+
+#Guardar resultados
+Invarianza <- as.data.frame(fit.stats)
+Invarianza <- round(Invarianza,3)
+
+write.xlsx(Invarianza,"INV.aut.eta.xlsx",colNames=TRUE, rowNames=TRUE)
+
+
+names(da)
+#Datos normativos
+# Calcular los percentiles 25, 50 y 75
+Percentiles <- quantile(da$Total, probs = c(0.25, 0.5, 0.75))
+Percentiles
+
+#Media
+Media <- describe(da$Total)$mean
+Media
+
+#DE
+DE<- describe(da$Total)$sd
+round(DE, 3)
+
+#DE2
+Varianza <- describe(da$Total)$sd^2 
+Varianza
+
+#Ponen confabilidad manualmente
+Confiabilidad <- 0.947 # Coeficiente de confiabilidad .95
+Confiabilidad
+
+# Función para calcular K2 usando la fórmula proporcionada
+calcular_k2 <- function(C, Media, Varianza, Confiabilidad) {
+  numerador <- (Confiabilidad * Varianza) + (Media - C)^2
+  denominador <- Varianza + (Media - C)^2
+  k2 <- numerador / denominador
+  return(k2)
+}
+
+# Calcular K2 para cada percentil (25, 50 y 75)
+k2_valores <- sapply(Percentiles, calcular_k2, Media, Varianza, Confiabilidad)
+
+# Crear un data frame con los resultados
+resultados <- round(data.frame(Percentil = c(25, 50, 75), PC = Percentiles, K2 = k2_valores), 3)
+
+# Mostrar los resultados redondeados
+print(resultados)
